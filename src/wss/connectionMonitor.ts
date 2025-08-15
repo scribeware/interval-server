@@ -24,16 +24,28 @@ interface PingFailure {
 const pingFailures = new Map<string, PingFailure>();
 let lastPingFailureLogTime = Date.now();
 
-export function incrementConnectionCreated(type: 'host' | 'client') {
+export function incrementConnectionCreated(type: "host" | "client" | "unknown") {
+  logger.verbose("Connection created", {
+    type,
+    totalConnectionsCreated,
+    totalHostConnections,
+    totalClientConnections,
+    timestamp: new Date().toISOString()
+  });
   totalConnectionsCreated++;
   if (type === 'host') {
+  logger.verbose("Connection closed", {
+    type,
+    totalConnectionsClosed,
+    timestamp: new Date().toISOString()
+  });
     totalHostConnections++;
   } else {
     totalClientConnections++;
   }
 }
 
-export function incrementConnectionClosed(type: 'host' | 'client') {
+export function incrementConnectionClosed(type: "host" | "client" | "unknown") {
   totalConnectionsClosed++;
 }
 
