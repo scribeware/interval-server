@@ -108,6 +108,10 @@ enum WebSocketState {
 }
 
 export function setupWebSocketServer(wss: WebSocketServer) {
+  logger.info('Setting up WebSocket server with enhanced logging')
+  startConnectionMonitoring()
+  startConnectionHealthChecks()
+  startAutoReconnectService()
   wss.on('listening', () => {
     // Schedule all existing scheduled actions
     scheduleAllExisting()
@@ -239,6 +243,12 @@ export function setupWebSocketServer(wss: WebSocketServer) {
   }
 
   wss.on('connection', async (rawSocket, req) => {
+    incrementConnectionCreated('unknown');
+    logger.verbose('New WebSocket connection received', {
+      timestamp: new Date().toISOString(),
+      ipAddress: getClientIp(req),
+      instanceId: serverInstanceId ?? clientId ?? undefined
+    });
     if (shuttingDown) {
       rawSocket.close(1012, 'Closing briefly for scheduled server restart.')
       return
@@ -509,6 +519,7 @@ export function setupWebSocketServer(wss: WebSocketServer) {
             }
 
             connectedClients.set(ws.id, {
+            incrementConnectionCreated('client');
               ws,
               rpc,
               user: auth.user,
@@ -795,6 +806,7 @@ export function setupWebSocketServer(wss: WebSocketServer) {
                 sdkVersion,
               }
               connectedHosts.set(ws.id, host)
+              incrementConnectionCreated('host');
               {
                 let keyIds = apiKeyHostIds.get(auth.apiKey.id)
                 if (!keyIds) {
@@ -2457,8 +2469,14 @@ export function setupWebSocketServer(wss: WebSocketServer) {
         try {
           await ws.ping()
           lastSuccessfulPing = new Date()
+          clearPingFailure(ws.id);
 
           if (connectedHosts.has(ws.id)) {
+            logger.debug('Failed ping to host', {
+              instanceId: ws.id,
+              organizationId: auth?.organization?.id,
+            });
+            recordPingFailure(ws.id, 'host', auth?.organization?.id);
             try {
               // doing these statuses separately to avoid changing status
               await prisma.hostInstance.updateMany({
@@ -2502,6 +2520,11 @@ export function setupWebSocketServer(wss: WebSocketServer) {
           }
 
           if (connectedHosts.has(ws.id)) {
+            logger.debug('Failed ping to host', {
+              instanceId: ws.id,
+              organizationId: auth?.organization?.id,
+            });
+            recordPingFailure(ws.id, 'host', auth?.organization?.id);
             try {
               const hostInstance = await prisma.hostInstance.findUnique({
                 where: { id: ws.id },
@@ -2539,6 +2562,7 @@ export function setupWebSocketServer(wss: WebSocketServer) {
             }
           } else if (connectedClients.has(ws.id)) {
             logger.debug('Failed ping to client', {
+            recordPingFailure(ws.id, 'client', auth?.organization?.id, auth?.user?.id);
               instanceId: ws.id,
               organizationId: auth?.organization?.id,
             })
@@ -2583,6 +2607,7 @@ export function setupWebSocketServer(wss: WebSocketServer) {
     }
 
     async function handleClose(data?: [number, string]) {
+      incrementConnectionClosed(host ? 'host' : client ? 'client' : 'unknown');
       if (closed) return
       closed = true
 
@@ -2829,25 +2854,3 @@ export function setupWebSocketServer(wss: WebSocketServer) {
  * in the last minute. The periodic heartbeat will bump
  * this while the host is connected.
  */
-async function checkForUnreachableHosts() {
-  try {
-    // Do this with a raw query in order to use database time
-    // instead of server time.
-    await prisma.$queryRaw`
-    update "HostInstance"
-    set status = 'UNREACHABLE'
-    where status = 'ONLINE'
-    and "updatedAt" < (now() - '00:01:00'::interval)
-    `
-
-    await prisma.$queryRaw`
-    delete from "HostInstance"
-    where status in ('UNREACHABLE', 'OFFLINE')
-    and "updatedAt" < (now() - '06:00:00'::interval)
-    `
-  } catch (error) {
-    logger.error('Failed checking for unreachable hosts', {
-      error,
-    })
-  }
-}
