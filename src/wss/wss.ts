@@ -70,6 +70,10 @@ import {
 import { isFlagEnabled } from '../server/utils/featureFlags'
 import { getSdkAlert } from '../server/utils/sdkAlerts'
 import { scheduleAllExisting } from './actionSchedule'
+import { startConnectionMonitoring } from './connectionMonitor'
+import { startConnectionHealthChecks } from './connectionHealthCheck'
+import { startAutoReconnectService } from './autoReconnect'
+import { startServerHealthMonitoring } from '../server/utils/serverHealth'
 import { deleteTransactionUploads } from '../server/utils/uploads'
 import {
   getPermissionsWarning,
@@ -112,6 +116,7 @@ export function setupWebSocketServer(wss: WebSocketServer) {
   startConnectionMonitoring()
   startConnectionHealthChecks()
   startAutoReconnectService()
+  startServerHealthMonitoring()
   wss.on('listening', () => {
     // Schedule all existing scheduled actions
     scheduleAllExisting()
